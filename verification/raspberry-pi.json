@@ -1,0 +1,51 @@
+{
+  "date": "2026-11-15",
+  "unit_tests_passed": 14,
+  "doctor_checks_passed": 9,
+  "device": "tzspec-pi",
+  "platform": "Debian 13 (trixie), aarch64, Raspberry Pi 4",
+  "lan_dns": "172.30.1.9",
+  "tailscale_dns": "100.114.183.68",
+  "network_interface": "wlan0",
+  "allowed_lan": "172.30.1.0/24",
+  "host_address_method": "DHCP; reserve the current address on the router",
+  "versions": {
+    "pihole_image": "2026.11.0",
+    "tailscale": "1.104.7",
+    "unbound": "1.26.2-0+deb13u1",
+    "docker": "26.1.5",
+    "compose": "2.26.1"
+  },
+  "passed": [
+    "ARM64 installation and Compose startup",
+    "DNS UDP and TCP from Pi and a separate LAN PC",
+    "Unbound recursive resolution",
+    "DNSSEC valid response AD flag and invalid signature SERVFAIL",
+    "Pi-hole deny, allow override, and deletion",
+    "Stopped-service backup and restoration of previous lists",
+    "Denied network namespace: TCP/UDP 53 and 5335",
+    "120-second unconfirmed network rollback, original UUID and DHCP preserved",
+    "SSH reconnect after rollback; actual address reflected in configuration",
+    "Reboot: firewall active 09:40:52, Docker 09:41:06, adblock 09:41:58 KST",
+    "Tailscale login and address assignment",
+    "Tailscale container restart preserves authentication and IP",
+    "DNS query to Tailscale address from Pi",
+    "User-confirmed DNS query from a separate Windows Tailscale client: nslookup example.com 100.114.183.68 returned A and AAAA answers",
+    "All nine adblock doctor checks true"
+  ],
+  "not_verified": [
+    "Tailnet global DNS override configuration",
+    "Router DHCP DNS and address reservation",
+    "Cross-subnet IP migration and physical power loss during network change",
+    "Real image upgrade failure and automatic data rollback",
+    "Disk exhaustion and authentication expiry fault injection"
+  ],
+  "fixes_from_live_testing": [
+    "Wait for usable DNS after container startup",
+    "Use supported Pi-hole v6 remove command",
+    "Parse NetworkManager multi-value DNS output",
+    "Preserve original NetworkManager UUID during rollback",
+    "Refresh DHCP address on startup and rollback",
+    "Run tailscaled directly to keep interactive login requests alive"
+  ]
+}

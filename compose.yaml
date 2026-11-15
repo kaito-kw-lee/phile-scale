@@ -1,0 +1,60 @@
+services:
+  unbound:
+    image: ${UNBOUND_IMAGE:?Run adblock install}
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - /etc/adblock/unbound.conf:/etc/unbound/unbound.conf:ro
+      - /var/lib/adblock/unbound:/var/lib/unbound
+    healthcheck:
+      test: [CMD-SHELL, "dig @127.0.0.1 -p 5335 +short +time=2 +tries=1 example.com | grep -q ."]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging: &logging
+      driver: json-file
+      options: {max-size: 10m, max-file: '3'}
+  pihole:
+    image: ${PIHOLE_IMAGE:?Run adblock install}
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      unbound: {condition: service_healthy}
+    environment:
+      TZ: Asia/Seoul
+      FTLCONF_dns_upstreams: '127.0.0.1#5335'
+      FTLCONF_dns_listeningMode: ALL
+      FTLCONF_webserver_port: '127.0.0.1:8080'
+      FTLCONF_database_maxDBdays: '7'
+      FTLCONF_dhcp_active: 'false'
+      FTLCONF_ntp_ipv4_active: 'false'
+      FTLCONF_ntp_ipv6_active: 'false'
+      WEBPASSWORD_FILE: webpassword
+    secrets: [webpassword]
+    volumes:
+      - /var/lib/adblock/pihole:/etc/pihole
+    healthcheck:
+      test: [CMD-SHELL, 'dig +short +time=2 +tries=1 @127.0.0.1 example.com | grep -q .']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging: *logging
+  tailscale:
+    image: ${TAILSCALE_IMAGE:?Run adblock install}
+    entrypoint: [tailscaled]
+    command: [--state=/var/lib/tailscale/tailscaled.state, --socket=/var/run/tailscale/tailscaled.sock]
+    network_mode: host
+    restart: unless-stopped
+    cap_add: [NET_ADMIN, NET_RAW]
+    devices: [/dev/net/tun:/dev/net/tun]
+    volumes:
+      - /var/lib/adblock/tailscale:/var/lib/tailscale
+    healthcheck:
+      test: [CMD, tailscale, status, --json]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging: *logging
+secrets:
+  webpassword:
+    file: /etc/adblock/webpassword

@@ -1,0 +1,8 @@
+[Unit]
+Description=Recover unconfirmed adblock network change
+ConditionPathExists=/var/lib/adblock/network-pending.json
+After=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/adblock _network-rollback

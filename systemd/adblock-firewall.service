@@ -1,0 +1,9 @@
+[Unit]
+Description=Adblock DNS access policy before Docker restores containers
+Before=docker.service
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/adblock _firewall

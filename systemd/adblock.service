@@ -1,0 +1,16 @@
+[Unit]
+Description=Adblock DNS stack
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/adblock start
+ExecStop=/usr/bin/docker compose --project-name adblock --env-file /etc/adblock/images.env -f /opt/adblock/current/compose.yaml stop
+TimeoutStartSec=300
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target
