@@ -26,6 +26,35 @@ Save network profiles and change the Pi's LAN address with a confirmation window
 
 ## How It Works
 
+### Hardware Setup
+
+Connect the Pi and your home devices to the same router. The router remains the internet gateway and DHCP server; the Pi provides DNS filtering as another device on the LAN.
+
+```mermaid
+flowchart TB
+    Internet[Internet] --- WAN[Modem or ONT]
+    WAN --- Router[Home router / Wi-Fi access point]
+    Router ---|Ethernet or Wi-Fi| Pi[Raspberry Pi running the adblock stack]
+    Router ---|Ethernet or Wi-Fi| Clients[Computers, phones, and other LAN devices]
+    Power[Pi power supply] --> Pi
+    Storage[microSD card or SSD with ARM64 OS] --- Pi
+    Remote[Remote phone or laptop with Tailscale] ---|Mobile data or another network| Internet
+    Remote -. Encrypted Tailscale connection over the internet .-> Pi
+```
+
+Solid lines show physical or network connectivity; the dotted line shows the Tailscale overlay connection. A modem/ONT may be integrated into your router or supplied by your ISP.
+
+| Component | Setup |
+| --- | --- |
+| Raspberry Pi | Raspberry Pi 4 ARM64 is the verified hardware; provide its power supply and boot storage with a supported OS. |
+| Router / access point | Connect the Pi by Ethernet or Wi-Fi, reserve its LAN IP, and advertise that IP as the DHCP DNS server. |
+| LAN devices | Connect to the same LAN and obtain the Pi's DNS address through DHCP. |
+| Remote devices (optional) | Install Tailscale, join the same Tailnet, and accept the configured Tailnet DNS settings. |
+
+Only DNS queries are sent to the Pi; ordinary web and application traffic continues through the router. The Pi does not need to sit between the router and your devices. Remote DNS access uses Tailscale and does not require forwarding public DNS port 53 on the router. See [LAN DNS](docs/operations.md#lan-dns) and [remote access](docs/operations.md#tailscale-and-remote-access) for configuration details.
+
+### DNS and Service Flow
+
 ```mermaid
 flowchart LR
     LAN[LAN clients] --> PH[Pi-hole]
