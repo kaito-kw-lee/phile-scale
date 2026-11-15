@@ -136,3 +136,7 @@ All commands, including status queries, require `sudo` to access the Docker sock
 The [hardware verification record](verification/raspberry-pi.json), dated **2026-11-15**, covers a **Raspberry Pi 4 running Debian 13 ARM64**. It records 14 passing unit tests and nine passing diagnostic checks, plus DNS/DNSSEC, filtering, backup restoration, denied ingress, network recovery, reboot startup, and Tailscale authentication checks.
 
 The tested image digests are in [`release-images.env`](release-images.env). The [verification guide](docs/verification.md#not-yet-verified-on-hardware) lists remaining hardware scenarios separately from recorded results.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
