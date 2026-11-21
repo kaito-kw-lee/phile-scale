@@ -30,7 +30,11 @@ The installation completion message confirms registration of the systemd start r
 
 ## LAN DNS
 
-The initial LAN IP is detected from the active connection. Reserve that address in your router's DHCP settings, then set the LAN DHCP DNS server to the Pi's IP. Router configuration is a manual step.
+LAN DNS configuration is optional. For personal devices using [Tailscale DNS](#tailscale-and-remote-access) at home or away, leave the router's DNS and DHCP settings unchanged; the Pi still connects to the LAN normally.
+
+For LAN-wide filtering, the initial LAN IP is detected from the active connection. Reserve that address in your router's DHCP settings, then set the LAN DHCP DNS server to the Pi's IP and renew client leases. This is the DNS address advertised to clients, distinct from the router's internet/WAN DNS setting. Router configuration is a manual step. For selected LAN devices only, keep the Pi's LAN address stable and set DNS on those devices manually instead.
+
+Sharing a LAN does not automatically enable filtering: clients must use Pi-hole for DNS. The package allows DNS from configured LAN ranges and Tailscale, so choosing personal Tailscale use does not block direct LAN access to Pi-hole.
 
 Router-advertised IPv6 DNS and browser or app DNS-over-HTTPS may bypass Pi-hole; configure them separately. This package blocks inbound IPv6 DNS and does not provide DHCP service.
 
