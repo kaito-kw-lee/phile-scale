@@ -13,7 +13,25 @@ python -m unittest discover -s tests -v
 python -m py_compile adblock.py
 ```
 
-The [unit test suite](../tests/test_adblock.py) contains 14 tests covering address validation, firewall replacement, network recovery and confirmation, startup DNS readiness, DHCP address refresh, Pi-hole list removal, and backup archive validation. Unit checks do not establish hardware compatibility.
+The unit suites in `tests/test_adblock.py` and `tests/test_lists.py` cover address validation, firewall replacement, network recovery, startup readiness, backups, and interactive list selection/API/save/Gravity behavior. Unit checks do not establish hardware compatibility.
+
+The interactive selector was tested on `tzspec-pi` on **2026-11-22**, using staged
+source against the running Pi-hole (Core v6.6, Web v6.6.1, FTL v6.9). The installed CLI
+was not replaced. See [`verification/lists-raspberry-pi.json`](../verification/lists-raspberry-pi.json).
+All 24 unit tests passed on the Pi. Real pseudo-terminal tests covered Esc cancellation,
+arrow/Space selection, Enter save and automatic Gravity, DNS blocking/unblocking,
+metadata preservation, and disabling without deletion. Original subscriptions were
+restored and all nine diagnostic checks passed before and after testing.
+
+`tests/live_lists.py` reproduces this explicit acceptance test from a staged repository
+as root. It temporarily subscribes to a loopback HTTP fixture blocking `example.net`,
+runs Gravity, and removes the subscription in cleanup. It requires that `example.net`
+resolves normally before the test. It uses the installed Compose configuration and
+the staged recommendation catalog. Run only when temporary blocking of that domain
+and Gravity refreshes are acceptable. No service stop or CLI installation is required.
+
+Actual terminal resizing, Ctrl+C during download, API outage and partial-save failure
+remain unverified on hardware; relevant unit coverage does not replace those checks.
 
 ## Recorded Hardware Results
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Raspberry Pi DNS appliance. All subprocess arguments are passed without a shell."""
 import argparse
+import contextlib
 import datetime
 import ipaddress
 import json
@@ -15,6 +16,9 @@ import sys
 import tarfile
 import tempfile
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 
 ETC = Path('/etc/adblock')
 DATA = Path('/var/lib/adblock')
@@ -22,6 +26,203 @@ APP = Path('/opt/adblock/current')
 CONFIG = ETC / 'config.json'
 PENDING = DATA / 'network-pending.json'
 SERVICES = ('unbound', 'pihole', 'tailscale')
+
+
+class PiholeAPI:
+    """Local v6 API session; never expose credentials in URLs or diagnostics."""
+    def __init__(self):
+        self.sid = None
+        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+    def request(self, method, path, payload=None):
+        headers = {'Content-Type': 'application/json'}
+        if self.sid:
+            headers['X-FTL-SID'] = self.sid
+        req = urllib.request.Request('http://127.0.0.1:8080/api' + path,
+                                     data=json.dumps(payload).encode() if payload is not None else None,
+                                     headers=headers, method=method)
+        try:
+            with self.opener.open(req, timeout=10) as response:
+                raw = response.read()
+            result = json.loads(raw) if raw else {}
+        except urllib.error.HTTPError as error:
+            raise ValueError(f'Pi-hole API HTTP {error.code}; check service and authentication') from None
+        except (OSError, ValueError) as error:
+            raise ValueError('Pi-hole API connection failed or returned invalid JSON') from None
+        if not isinstance(result, dict) or result.get('error') or (result.get('processed') or {}).get('errors'):
+            raise ValueError('Pi-hole API rejected the operation')
+        return result
+
+    def __enter__(self):
+        session = self.request('POST', '/auth', {'password': (ETC / 'webpassword').read_text().strip()}).get('session', {})
+        if not session.get('valid'):
+            raise ValueError('Pi-hole authentication failed; check webpassword and any 2FA configuration')
+        self.sid = session.get('sid')
+        return self
+
+    def __exit__(self, *args):
+        if self.sid:
+            try:
+                self.request('DELETE', '/auth')
+            except ValueError:
+                print('Warning: could not close Pi-hole API session; it will expire.', file=sys.stderr)
+            finally:
+                self.sid = None
+
+    def lists(self):
+        rows = self.request('GET', '/lists?type=block').get('lists')
+        if not isinstance(rows, list) or any(not isinstance(r, dict) or
+                not all(k in r for k in ('address', 'enabled', 'groups', 'comment')) for r in rows):
+            raise ValueError('Unexpected Pi-hole list response')
+        return [r for r in rows if r.get('type', 'block') == 'block']
+
+
+def recommended_lists():
+    rows = json.loads((APP / 'recommended-lists.json').read_text())['lists']
+    seen = set()
+    for row in rows:
+        url = urllib.parse.urlsplit(row['url'])
+        if url.scheme not in ('http', 'https') or not url.hostname or row['url'] in seen:
+            raise ValueError('Invalid or duplicate recommended list URL')
+        seen.add(row['url'])
+    return rows
+
+
+def list_choices(recommended, existing):
+    registered = {r['address']: r for r in existing}
+    rows = []
+    for entry in recommended:
+        old = registered.pop(entry['url'], None)
+        rows.append(dict(url=entry['url'], name=entry['name'], recommended=True,
+                         registered=old is not None, enabled=bool(old and old['enabled'])))
+    for url, old in sorted(registered.items()):
+        rows.append(dict(url=url, name=url, recommended=False, registered=True, enabled=bool(old['enabled'])))
+    return rows
+
+
+def select_lists(screen, rows, curses):
+    """Edit only the local selection; API mutations happen after wrapper restores the terminal."""
+    screen.keypad(True)
+    try:
+        curses.curs_set(0)
+    except curses.error:
+        pass
+    selected = {r['url']: r['enabled'] for r in rows}
+    cursor = 0
+    while True:
+        height, width = screen.getmaxyx()
+        screen.erase()
+        def line(y, text, attr=0):
+            if 0 <= y < height and width > 1:
+                safe = ''.join(c if c.isprintable() else '?' for c in text)
+                try:
+                    screen.addnstr(y, 0, safe, width - 1, attr)
+                except curses.error:
+                    pass
+        line(0, 'Block lists - selection is saved on Enter')
+        visible = max(1, height - 6)
+        start = max(0, cursor - visible + 1)
+        for offset, row in enumerate(rows[start:start + visible]):
+            index = start + offset
+            tag = 'recommended' if row['recommended'] else 'existing'
+            state = 'registered' if row['registered'] else 'new'
+            label = f"[{'x' if selected[row['url']] else ' '}] {row['name']} ({tag}, {state})"
+            line(2 + offset, label, curses.A_REVERSE if index == cursor else 0)
+        if rows:
+            line(height - 3, rows[cursor]['url'])
+        line(height - 2, 'Up/Down move | Space toggle | Enter save + update | Esc cancel')
+        screen.refresh()
+        key = screen.getch()
+        if key in (27, 3):
+            return None
+        if key in (10, 13, curses.KEY_ENTER):
+            return selected
+        if rows:
+            if key == curses.KEY_UP:
+                cursor = max(0, cursor - 1)
+            elif key == curses.KEY_DOWN:
+                cursor = min(len(rows) - 1, cursor + 1)
+            elif key == ord(' '):
+                url = rows[cursor]['url']
+                selected[url] = not selected[url]
+
+
+def lists_fingerprint(rows):
+    # Ignore download statistics which can change during a scheduled gravity run.
+    return sorted((r['address'], json.dumps({k: r.get(k) for k in
+                   ('id', 'type', 'enabled', 'groups', 'comment', 'date_modified')}, sort_keys=True)) for r in rows)
+
+
+def save_lists(api, original, choices):
+    if lists_fingerprint(api.lists()) != lists_fingerprint(original):
+        raise ValueError('Lists changed while selecting; nothing saved. Run adblock lists again.')
+    old = {r['address']: r for r in original}
+    changes = [(url, enabled) for url, enabled in choices.items()
+               if (url in old and bool(old[url]['enabled']) != enabled) or (url not in old and enabled)]
+    saved = []
+    for index, (url, enabled) in enumerate(changes):
+        try:
+            if url in old:
+                payload = {k: old[url][k] for k in ('comment', 'groups')}
+                payload.update(enabled=enabled, type='block')
+                api.request('PUT', '/lists/' + urllib.parse.quote(url, safe='') + '?type=block', payload)
+            else:
+                api.request('POST', '/lists?type=block', dict(address=url, enabled=True,
+                            groups=[0], comment='phile-scale recommended list'))
+            saved.append(url)
+        except (ValueError, KeyboardInterrupt):
+            print('Saved: ' + (', '.join(saved) or '(none)'), file=sys.stderr)
+            print('Failed or uncertain: ' + url, file=sys.stderr)
+            print('Not attempted: ' + (', '.join(u for u, _ in changes[index + 1:]) or '(none)'), file=sys.stderr)
+            raise ValueError('List save incomplete; Gravity was not run. Reopen adblock lists to review and retry.') from None
+    print(f'Saved selection ({len(saved)} changed lists).')
+
+
+def gravity_update():
+    print('Updating Gravity; review the output for individual download warnings.', flush=True)
+    try:
+        result = compose('exec', '-T', 'pihole', 'pihole', '-g', capture=False, check=False)
+    except KeyboardInterrupt:
+        print('Update interrupted; saved choices retained. Retry: sudo adblock gravity update', file=sys.stderr)
+        return 130
+    except OSError:
+        print('Update could not start; saved choices retained. Retry: sudo adblock gravity update', file=sys.stderr)
+        return 1
+    if result.returncode:
+        print('Update failed; saved choices retained. Retry: sudo adblock gravity update', file=sys.stderr)
+    return result.returncode
+
+
+def manage_lists(args):
+    if args.action == 'list':
+        with PiholeAPI() as api:
+            rows = api.lists()
+        if args.json:
+            print(json.dumps(rows, indent=2))
+        else:
+            for row in rows:
+                print(f"[{'x' if row['enabled'] else ' '}] {row['address']} groups={row['groups']} {row['comment'] or ''}")
+        return 0
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        raise ValueError('Interactive terminal required; use adblock lists list --json for read-only output')
+    import curses
+    with PiholeAPI() as api:
+        original = api.lists()
+    rows = list_choices(recommended_lists(), original)
+    try:
+        choices = curses.wrapper(select_lists, rows, curses)
+    except KeyboardInterrupt:
+        choices = None
+    except curses.error:
+        raise ValueError('Cannot initialize interactive terminal; check TERM or use adblock lists list') from None
+    if choices is None:
+        print('Cancelled; no changes saved.')
+        return 0
+    # Authenticate again after interactive input so an idle session cannot expire while selecting.
+    with command_lock():
+        with PiholeAPI() as api:
+            save_lists(api, original, choices)
+        return gravity_update()
 
 
 def run(*args, check=True, capture=True, input=None):
@@ -202,7 +403,7 @@ def install(args):
     run('systemctl', 'enable', '--now', 'docker', capture=False)
     source = Path(__file__).resolve().parent
     APP.mkdir(parents=True, exist_ok=True)
-    for name in ('compose.yaml', 'adblock.py', 'unbound', 'systemd'):
+    for name in ('compose.yaml', 'adblock.py', 'recommended-lists.json', 'unbound', 'systemd'):
         src, dst = source / name, APP / name
         if src.resolve() != dst.resolve():
             if src.is_dir():
@@ -228,7 +429,7 @@ def install(args):
 
 def register_runtime(source):
     if source != APP and (source / 'compose.yaml').exists():
-        for name in ('compose.yaml', 'adblock.py', 'unbound', 'systemd'):
+        for name in ('compose.yaml', 'adblock.py', 'recommended-lists.json', 'unbound', 'systemd'):
             if (source / name).is_dir():
                 shutil.copytree(source / name, APP / name, dirs_exist_ok=True)
             else:
@@ -505,6 +706,10 @@ def parser():
         s = sub.add_parser(name)
         s.add_argument('action', choices=('add', 'remove'))
         s.add_argument('domain')
+    s = sub.add_parser('lists')
+    ls = s.add_subparsers(dest='action')
+    ls.add_parser('list').add_argument('--json', action='store_true')
+    sub.add_parser('gravity').add_subparsers(dest='action', required=True).add_parser('update')
     n = sub.add_parser('network').add_subparsers(dest='action', required=True)
     n.add_parser('show')
     n.add_parser('confirm')
@@ -519,6 +724,10 @@ def parser():
 
 def execute(a):
     cmd = a.command
+    if cmd == 'lists':
+        return manage_lists(a)
+    if cmd == 'gravity':
+        return gravity_update()
     if PENDING.exists() and cmd not in ('network', 'status', '_network-apply', '_network-rollback', '_firewall', 'start'):
         raise ValueError('Network change pending; confirm it or wait for automatic recovery first')
     if cmd == 'install':
@@ -620,12 +829,20 @@ def main():
     if a.command == '_firewall':
         firewall(config())
         return 0
-    # Serialize every operation with rollback jobs, including confirmation at the deadline.
-    import fcntl
-    lock_path = Path('/run/lock/adblock.lock')
-    with lock_path.open('w') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    # Do not hold the recovery lock while waiting for interactive input.
+    if a.command == 'lists':
+        return manage_lists(a)
+    with command_lock():
         return execute(a)
+
+
+@contextlib.contextmanager
+def command_lock():
+    import fcntl
+    with Path('/run/lock/adblock.lock').open('w') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+
 
 
 if __name__ == '__main__':

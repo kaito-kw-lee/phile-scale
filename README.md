@@ -152,6 +152,10 @@ sudo adblock status --json
 sudo adblock doctor --json
 sudo adblock logs pihole
 
+sudo adblock lists                  # Space toggles; Enter saves and updates Gravity
+sudo adblock lists list --json      # Read registered block lists
+sudo adblock gravity update         # Retry or refresh downloaded lists
+
 sudo adblock block add ads.example.com
 sudo adblock block remove ads.example.com
 sudo adblock allow add trusted.example.com
@@ -159,6 +163,8 @@ sudo adblock allow remove trusted.example.com
 ```
 
 All commands, including status queries, require `sudo` to access the Docker socket and private configuration. See the [operations guide](docs/operations.md) for network profiles, backups, updates, rollback, and removal.
+
+The interactive list selector combines a bundled Firebog recommendation snapshot with your existing Pi-hole block lists. New recommendations start unchecked. Enter saves the selection and runs Gravity, displaying download progress; Esc cancels without saving. Unchecking disables a list without deleting it. See [block-list selection](docs/operations.md#interactive-block-list-selection) for details.
 
 ## Documentation
 

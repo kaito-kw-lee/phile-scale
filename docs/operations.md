@@ -152,6 +152,57 @@ sudo adblock uninstall --purge-data
 
 Removal deletes services and package-owned firewall rules. Docker, other containers, host LAN settings, and source files are preserved. After uninstalling while retaining data, running the installer again re-registers the systemd units.
 
+## Interactive Block-list Selection
+
+To deploy this CLI feature to an existing Pi, copy the updated repository (including
+`recommended-lists.json`) and run `sudo sh install.sh` from its root. The existing-install
+path refreshes application files while retaining configuration and pinned images.
+`adblock update` updates container images; it does not fetch new CLI source files.
+
+Run `sudo adblock lists` in an interactive terminal (allocate a TTY when using SSH).
+Use Up/Down to move, Space to toggle, and Enter to save and update Gravity.
+Esc or Ctrl+C in the selection screen cancels without saving. The selected row's
+URL appears at the bottom; the screen scrolls to follow the cursor.
+
+Recommendations are a reviewed subset of [Firebog's ticked lists](https://v.firebog.net/hosts/lists.php?type=tick),
+bundled in `recommended-lists.json`: AdAway, EasyList and EasyPrivacy. The catalog
+records its review date and changes with project releases, not at runtime.
+The contents of enabled lists are downloaded afresh by Gravity. New recommendations
+start unchecked; existing entries reflect Pi-hole's current enabled state.
+
+Existing custom block lists also appear. Unchecking disables rather than deletes
+an entry. New checked entries join Pi-hole's default group; existing group assignments
+and comments are retained. Group membership still determines which clients use a
+list. Existing allow-list subscriptions and individual domain rules are not modified.
+Use `sudo adblock allow add DOMAIN` for individual domain exceptions.
+
+Enter closes the selector, saves changes through the local Pi-hole v6 API, and runs
+`pihole -g` with visible progress. Enter also refreshes Gravity when the selection is
+unchanged. Saving enabled flags can affect Pi-hole before the download finishes;
+save and refresh are not an atomic transaction.
+
+If another administrator changes the list configuration while you select, saving
+stops and asks you to reopen the selector. This is an optimistic check, not an API
+transaction locking out concurrent web UI edits. Partial save failures report saved,
+uncertain and unattempted entries and skip Gravity; reopen the selector to review.
+If Gravity fails or is interrupted, the saved selection remains. Retry with:
+
+```sh
+sudo adblock gravity update
+```
+
+Review the output for individual download warnings even when the command exits
+successfully. For scripts or noninteractive sessions, inspect registered block lists:
+
+```sh
+sudo adblock lists list
+sudo adblock lists list --json
+```
+
+API requests use the existing `/etc/adblock/webpassword` and the loopback web service.
+If you changed the web password independently or enabled 2FA, authentication may fail;
+this selector does not prompt for a second factor. It does not modify authentication settings.
+
 ## References
 
 - [Pi-hole Docker](https://docs.pi-hole.net/docker/)

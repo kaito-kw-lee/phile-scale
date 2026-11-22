@@ -1,0 +1,29 @@
+{
+  "date": "2026-11-22",
+  "device": "tzspec-pi",
+  "architecture": "aarch64",
+  "execution": "Staged source over SSH, real Linux pseudo-terminal, existing Pi-hole services; installed CLI unchanged",
+  "versions": {"core": "v6.6", "web": "v6.6.1", "ftl": "v6.9"},
+  "unit_tests_passed": 24,
+  "doctor_checks_before": 9,
+  "doctor_checks_after": 9,
+  "passed": [
+    "Pi-hole API authentication, list GET, POST, PUT and DELETE",
+    "Real curses selector rendering and arrow/Space/Enter input",
+    "Esc cancellation preserves all list settings",
+    "Enter saves enabled state and automatically runs Gravity",
+    "Enabled fixture blocks example.net with 0.0.0.0",
+    "Group and comment preservation",
+    "Unchecking disables the list without deleting it",
+    "Enter after disabling restores normal example.net DNS resolution",
+    "Fixture deletion and cleanup Gravity refresh",
+    "Original subscription configuration restored",
+    "Final DNS and all nine doctor checks healthy"
+  ],
+  "not_verified_on_hardware": [
+    "Terminal resize and small-screen scrolling",
+    "Ctrl+C during Gravity download",
+    "API outage and partial-save failure",
+    "Installing the new CLI into /usr/local/bin/adblock"
+  ]
+}
