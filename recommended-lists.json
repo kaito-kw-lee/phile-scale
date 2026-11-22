@@ -1,0 +1,18 @@
+{
+  "source": "https://v.firebog.net/hosts/lists.php?type=tick",
+  "reviewed": "2026-11-22",
+  "lists": [
+    {
+      "name": "AdAway",
+      "url": "https://adaway.org/hosts.txt"
+    },
+    {
+      "name": "EasyList",
+      "url": "https://v.firebog.net/hosts/Easylist.txt"
+    },
+    {
+      "name": "EasyPrivacy",
+      "url": "https://v.firebog.net/hosts/Easyprivacy.txt"
+    }
+  ]
+}
