@@ -160,6 +160,10 @@ path refreshes application files while retaining configuration and pinned images
 `adblock update` updates container images; it does not fetch new CLI source files.
 
 Run `sudo adblock lists` in an interactive terminal (allocate a TTY when using SSH).
+The selector appears directly below the command in the normal terminal buffer;
+previous output and scrollback remain available. Only the selector's lines are redrawn.
+After a resize, a new selector block may be appended to avoid overwriting reflowed output.
+ANSI support is required; `TERM=dumb` is rejected with a read-only alternative.
 Use Up/Down to move, Space to toggle, and Enter to save and update Gravity.
 Esc or Ctrl+C in the selection screen cancels without saving. The selected row's
 URL appears at the bottom; the screen scrolls to follow the cursor.
@@ -169,6 +173,17 @@ bundled in `recommended-lists.json`: AdAway, EasyList and EasyPrivacy. The catal
 records its review date and changes with project releases, not at runtime.
 The contents of enabled lists are downloaded afresh by Gravity. New recommendations
 start unchecked; existing entries reflect Pi-hole's current enabled state.
+
+Each recommendation displays `Recommended by: firebog.net`. Other registered lists
+display `Download host:` instead; no recommendation source is inferred for custom
+lists. The selected item's actual URL appears separately as `Download:`. The catalog's
+top-level `source` is the recommendation default, with optional per-entry `source`
+overrides; `snapshot_url` records where the reviewed recommendation snapshot came from.
+
+All CLI-generated labels, help, status and error messages are English. Child processes
+receive `LC_ALL=C` and `LANGUAGE=C`; Gravity also receives these inside its container.
+Original list names, URLs and user-provided descriptions are not translated. Control
+characters are sanitized in the selector, and long lines are clipped to terminal width.
 
 Existing custom block lists also appear. Unchecking disables rather than deletes
 an entry. New checked entries join Pi-hole's default group; existing group assignments

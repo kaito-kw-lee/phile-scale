@@ -1,0 +1,23 @@
+{
+  "date": "2026-11-22",
+  "device": "tzspec-pi",
+  "execution": "Staged source over SSH against existing services; installed CLI unchanged",
+  "unit_tests_passed": 29,
+  "passed": [
+    "Inline UI in the normal terminal buffer, no screen clearing or alternate-screen escape codes",
+    "Recommendation attribution and custom-list download host labels",
+    "Long-list arrow navigation and terminal resize from 100x24 to 80x12",
+    "Esc and Ctrl+C cancellation without saving",
+    "Terminal attributes restored after save and cancellation",
+    "Space and Enter save followed by automatic Gravity refresh",
+    "Temporary subscription blocks example.net and disabling restores DNS resolution",
+    "Existing groups and comments preserved; uncheck disables without deleting",
+    "Temporary subscription removed and original subscription settings restored",
+    "English UI and Gravity output"
+  ],
+  "not_verified_on_hardware": [
+    "Ctrl+C during Gravity download",
+    "API outage and partial-save failure",
+    "Installing the new CLI into /usr/local/bin/adblock"
+  ]
+}

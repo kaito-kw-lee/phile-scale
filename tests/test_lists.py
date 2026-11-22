@@ -58,34 +58,81 @@ class ListTests(unittest.TestCase):
             api.assert_not_called()
 
     def test_cancel_save_no_changes_and_save_failure(self):
-        fake_curses = Mock()
         args = app.parser().parse_args(['lists'])
         for choices, save_error, expected in [(None, None, 0), ({}, None, 1), ({}, ValueError('save failed'), 0)]:
             with self.subTest(choices=choices, error=save_error), \
-                 patch.dict('sys.modules', curses=fake_curses), \
+                 patch.dict(app.os.environ, TERM='xterm'), \
                  patch.object(app.sys.stdin, 'isatty', return_value=True), \
                  patch.object(app.sys.stdout, 'isatty', return_value=True), \
                  patch.object(app, 'PiholeAPI') as api, \
                  patch.object(app, 'recommended_lists', return_value=[]), \
+                 patch.object(app, 'select_lists', return_value=choices), \
                  patch.object(app, 'command_lock', contextlib.nullcontext), \
                  patch.object(app, 'save_lists', side_effect=save_error), \
                  patch.object(app, 'gravity_update', return_value=0) as gravity:
                 api.return_value.__enter__.return_value.lists.return_value = []
-                fake_curses.wrapper.return_value = choices
                 if save_error:
                     with self.assertRaises(ValueError): app.manage_lists(args)
                 else:
                     self.assertEqual(app.manage_lists(args), 0)
                 self.assertEqual(gravity.call_count, expected)
 
-    def test_keyboard_selection_resize_and_cancel(self):
-        curses = Mock(KEY_UP=100, KEY_DOWN=101, KEY_ENTER=102, A_REVERSE=1, error=RuntimeError)
-        rows = app.list_choices([dict(url='https://a', name='A'), dict(url='https://b', name='B')], [])
-        screen = Mock(); screen.getmaxyx.return_value = (8, 30)
-        screen.getch.side_effect = [ord(' '), 101, ord(' '), 999, 100, 10]
-        self.assertEqual(app.select_lists(screen, rows, curses), {'https://a': True, 'https://b': True})
-        screen.getch.side_effect = [27]
-        self.assertIsNone(app.select_lists(screen, rows, curses))
+    def test_inline_render_navigation_resize_and_cancel(self):
+        rows = app.list_choices([dict(url='https://a', name='A', source='https://firebog.net')], [])
+        output = io.StringIO()
+        sizes = [app.os.terminal_size((100, 24)), app.os.terminal_size((100, 24)), app.os.terminal_size((80, 12))]
+        with patch.object(app, 'list_terminal', lambda: contextlib.nullcontext(1)), \
+             patch.object(app, 'read_list_key', side_effect=['toggle', None, 'save']), \
+             patch.object(app.shutil, 'get_terminal_size', side_effect=sizes), contextlib.redirect_stdout(output):
+            self.assertEqual(app.select_lists(rows), {'https://a': True})
+        self.assertIn('Recommended by: firebog.net', output.getvalue())
+        self.assertIn('[x]', output.getvalue())
+        self.assertNotIn('\x1b[2J', output.getvalue())
+        self.assertNotIn('1049', output.getvalue())
+        with patch.object(app, 'list_terminal', lambda: contextlib.nullcontext(1)), \
+             patch.object(app, 'read_list_key', return_value='cancel'), contextlib.redirect_stdout(io.StringIO()):
+            self.assertIsNone(app.select_lists(rows))
+
+    def test_source_defaults_overrides_and_user_host(self):
+        data = dict(source='https://firebog.net/path', lists=[dict(name='A', url='https://a'),
+                    dict(name='B', url='https://b', source='https://other.org')])
+        with patch.object(app.Path, 'read_text', return_value=json.dumps(data)):
+            rows = app.list_choices(app.recommended_lists(), [row()])
+        lines = '\n'.join(app.list_lines(rows, {r['url']: False for r in rows}, 0, (120, 24)))
+        self.assertIn('Recommended by: firebog.net', lines)
+        self.assertIn('Recommended by: other.org', lines)
+        self.assertIn('Download host: example.org', lines)
+
+    def test_controls_unicode_and_scroll(self):
+        self.assertEqual(app.terminal_text('\ud55c\uae00abc', 5), '\ud55c\uae00a')
+        self.assertNotIn('\x1b', app.terminal_text('bad\x1b[2J\n', 50))
+        rows = app.list_choices([dict(name=str(i), url='https://a/' + str(i)) for i in range(30)], [])
+        lines = app.list_lines(rows, {r['url']: False for r in rows}, 29, (80, 10))
+        self.assertLess(len(lines), 10)
+        self.assertIn('> [ ] 29', '\n'.join(lines))
+
+    def test_key_sequences(self):
+        for data, key in [(b'\x1b', 'cancel'), (b'\x1b[A', 'up'), (b'\x1bOB', 'down'), (b' ', 'toggle'), (b'\r', 'save')]:
+            with self.subTest(data=data), patch.object(app.os, 'read', side_effect=[bytes([c]) for c in data]), \
+                 patch.object(app.select, 'select', side_effect=[([1], [], [])] * len(data) + [([], [], [])]):
+                self.assertEqual(app.read_list_key(1), key)
+
+    def test_english_child_locale(self):
+        with patch.object(app.subprocess, 'run') as run:
+            app.run('true')
+        self.assertEqual(run.call_args.kwargs['env']['LC_ALL'], 'C')
+        self.assertEqual(run.call_args.kwargs['env']['LANGUAGE'], 'C')
+
+    def test_terminal_restoration_on_error(self):
+        termios = Mock(TCSANOW=0); termios.tcgetattr.return_value = ['original']
+        tty = Mock()
+        with patch.dict('sys.modules', termios=termios, tty=tty), \
+             patch.object(app.sys.stdin, 'fileno', return_value=1), contextlib.redirect_stdout(io.StringIO()) as output:
+            with self.assertRaises(RuntimeError):
+                with app.list_terminal():
+                    raise RuntimeError('test')
+        termios.tcsetattr.assert_called_once_with(1, 0, ['original'])
+        self.assertTrue(output.getvalue().endswith('\x1b[?25h'))
 
     def test_api_auth_and_logout_even_on_failure(self):
         api = app.PiholeAPI()

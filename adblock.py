@@ -10,6 +10,8 @@ from pathlib import Path
 import platform
 import re
 import secrets
+import select
+import unicodedata
 import shutil
 import subprocess
 import sys
@@ -78,7 +80,8 @@ class PiholeAPI:
 
 
 def recommended_lists():
-    rows = json.loads((APP / 'recommended-lists.json').read_text())['lists']
+    catalog = json.loads((APP / 'recommended-lists.json').read_text())
+    rows = [dict(row, source=row.get('source', catalog.get('source', ''))) for row in catalog['lists']]
     seen = set()
     for row in rows:
         url = urllib.parse.urlsplit(row['url'])
@@ -93,58 +96,115 @@ def list_choices(recommended, existing):
     rows = []
     for entry in recommended:
         old = registered.pop(entry['url'], None)
-        rows.append(dict(url=entry['url'], name=entry['name'], recommended=True,
+        rows.append(dict(url=entry['url'], name=entry['name'], recommended=True, source=entry.get('source', ''),
                          registered=old is not None, enabled=bool(old and old['enabled'])))
     for url, old in sorted(registered.items()):
-        rows.append(dict(url=url, name=url, recommended=False, registered=True, enabled=bool(old['enabled'])))
+        rows.append(dict(url=url, name=url, recommended=False, source='', registered=True, enabled=bool(old['enabled'])))
     return rows
 
 
-def select_lists(screen, rows, curses):
-    """Edit only the local selection; API mutations happen after wrapper restores the terminal."""
-    screen.keypad(True)
+def terminal_text(text, width):
+    """Sanitize terminal controls and truncate by display cells, not code points."""
+    result, used = [], 0
+    for char in str(text):
+        if not char.isprintable():
+            char = '?'
+        cells = 0 if unicodedata.combining(char) else (2 if unicodedata.east_asian_width(char) in ('W', 'F') else 1)
+        if used + cells > max(0, width):
+            break
+        result.append(char)
+        used += cells
+    return ''.join(result)
+
+
+def list_lines(rows, selected, cursor, size):
+    width, height = size
+    if width < 25 or height < 7:
+        return [terminal_text('Resize terminal; Esc cancels.', width - 1)]
+    visible = max(1, height - 5)
+    start = max(0, cursor - visible + 1)
+    lines = ['Select block lists']
+    for index in range(start, min(len(rows), start + visible)):
+        row = rows[index]
+        host = urllib.parse.urlsplit(row['source'] if row['recommended'] else row['url']).hostname
+        source = ('Recommended by: ' if row['recommended'] else 'Download host: ') + (host or 'unknown')
+        prefix = f"{'>' if index == cursor else ' '} [{'x' if selected[row['url']] else ' '}] "
+        # Reserve room for attribution even when the list name is a long URL.
+        name_width = max(4, width - len(prefix) - len(source) - 3)
+        lines.append(prefix + terminal_text(row['name'], name_width) + '  ' + source)
+    if not rows:
+        lines.append('No block lists available.')
+    lines.append('Download: ' + (rows[cursor]['url'] if rows else '(none)'))
+    lines.append('Up/Down move | Space toggle | Enter save + update | Esc cancel')
+    return [terminal_text(line, width - 1) for line in lines]
+
+
+def read_list_key(fd):
+    if not select.select([fd], [], [], 0.2)[0]:
+        return None
+    char = os.read(fd, 1)
+    if char == b'':
+        return 'cancel'
+    if char == b'\x1b':
+        sequence = char
+        # A standalone Escape cancels; CSI and SS3 arrows are navigation.
+        while len(sequence) < 16 and select.select([fd], [], [], 0.08)[0]:
+            sequence += os.read(fd, 1)
+            if len(sequence) >= 3 and 0x40 <= sequence[-1] <= 0x7e:
+                break
+        if sequence == b'\x1b':
+            return 'cancel'
+        return {b'\x1b[A': 'up', b'\x1bOA': 'up', b'\x1b[B': 'down', b'\x1bOB': 'down'}.get(sequence)
+    return {b'\x03': 'cancel', b'\r': 'save', b'\n': 'save', b' ': 'toggle'}.get(char)
+
+
+@contextlib.contextmanager
+def list_terminal():
+    import termios
+    import tty
+    fd = sys.stdin.fileno()
+    previous = termios.tcgetattr(fd)
     try:
-        curses.curs_set(0)
-    except curses.error:
-        pass
+        tty.setcbreak(fd, termios.TCSANOW)
+        sys.stdout.write('\x1b[?25l')
+        sys.stdout.flush()
+        yield fd
+    finally:
+        termios.tcsetattr(fd, termios.TCSANOW, previous)
+        sys.stdout.write('\x1b[?25h')
+        sys.stdout.flush()
+
+
+def select_lists(rows):
+    """Render only our own lines in the normal terminal buffer."""
     selected = {r['url']: r['enabled'] for r in rows}
     cursor = 0
-    while True:
-        height, width = screen.getmaxyx()
-        screen.erase()
-        def line(y, text, attr=0):
-            if 0 <= y < height and width > 1:
-                safe = ''.join(c if c.isprintable() else '?' for c in text)
-                try:
-                    screen.addnstr(y, 0, safe, width - 1, attr)
-                except curses.error:
-                    pass
-        line(0, 'Block lists - selection is saved on Enter')
-        visible = max(1, height - 6)
-        start = max(0, cursor - visible + 1)
-        for offset, row in enumerate(rows[start:start + visible]):
-            index = start + offset
-            tag = 'recommended' if row['recommended'] else 'existing'
-            state = 'registered' if row['registered'] else 'new'
-            label = f"[{'x' if selected[row['url']] else ' '}] {row['name']} ({tag}, {state})"
-            line(2 + offset, label, curses.A_REVERSE if index == cursor else 0)
-        if rows:
-            line(height - 3, rows[cursor]['url'])
-        line(height - 2, 'Up/Down move | Space toggle | Enter save + update | Esc cancel')
-        screen.refresh()
-        key = screen.getch()
-        if key in (27, 3):
-            return None
-        if key in (10, 13, curses.KEY_ENTER):
-            return selected
-        if rows:
-            if key == curses.KEY_UP:
-                cursor = max(0, cursor - 1)
-            elif key == curses.KEY_DOWN:
-                cursor = min(len(rows) - 1, cursor + 1)
-            elif key == ord(' '):
-                url = rows[cursor]['url']
-                selected[url] = not selected[url]
+    previous_lines, previous_size = [], None
+    with list_terminal() as fd:
+        while True:
+            size = shutil.get_terminal_size()
+            lines = list_lines(rows, selected, cursor, size)
+            if lines != previous_lines or size != previous_size:
+                if previous_lines and size == previous_size:
+                    sys.stdout.write(f'\x1b[{len(previous_lines)}A')
+                # After resize the old lines may have reflowed: append safely.
+                for line in lines:
+                    sys.stdout.write('\r\x1b[2K' + line + '\n')
+                sys.stdout.flush()
+                previous_lines, previous_size = lines, size
+            key = read_list_key(fd)
+            if key == 'cancel':
+                return None
+            if key == 'save':
+                return selected
+            if rows:
+                if key == 'up':
+                    cursor = max(0, cursor - 1)
+                elif key == 'down':
+                    cursor = min(len(rows) - 1, cursor + 1)
+                elif key == 'toggle':
+                    url = rows[cursor]['url']
+                    selected[url] = not selected[url]
 
 
 def lists_fingerprint(rows):
@@ -181,7 +241,7 @@ def save_lists(api, original, choices):
 def gravity_update():
     print('Updating Gravity; review the output for individual download warnings.', flush=True)
     try:
-        result = compose('exec', '-T', 'pihole', 'pihole', '-g', capture=False, check=False)
+        result = compose('exec', '-T', '-e', 'LC_ALL=C', '-e', 'LANGUAGE=C', 'pihole', 'pihole', '-g', capture=False, check=False)
     except KeyboardInterrupt:
         print('Update interrupted; saved choices retained. Retry: sudo adblock gravity update', file=sys.stderr)
         return 130
@@ -205,16 +265,15 @@ def manage_lists(args):
         return 0
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         raise ValueError('Interactive terminal required; use adblock lists list --json for read-only output')
-    import curses
+    if os.environ.get('TERM', '') in ('', 'dumb'):
+        raise ValueError('ANSI terminal required; use adblock lists list --json for read-only output')
     with PiholeAPI() as api:
         original = api.lists()
     rows = list_choices(recommended_lists(), original)
     try:
-        choices = curses.wrapper(select_lists, rows, curses)
+        choices = select_lists(rows)
     except KeyboardInterrupt:
         choices = None
-    except curses.error:
-        raise ValueError('Cannot initialize interactive terminal; check TERM or use adblock lists list') from None
     if choices is None:
         print('Cancelled; no changes saved.')
         return 0
@@ -227,7 +286,7 @@ def manage_lists(args):
 
 def run(*args, check=True, capture=True, input=None):
     return subprocess.run([str(a) for a in args], check=check, text=True,
-                          capture_output=capture, input=input)
+                          capture_output=capture, input=input, env=dict(os.environ, LC_ALL='C', LANGUAGE='C'))
 
 
 def atomic_json(path, value):
@@ -819,6 +878,8 @@ def execute(a):
 
 
 def main():
+    # Keep generated help, errors and child-process messages in English.
+    os.environ.update(LC_ALL='C', LANGUAGE='C')
     a = parser().parse_args()
     if platform.system() != 'Linux':
         raise ValueError('Execution requires Linux; --help works on other platforms')

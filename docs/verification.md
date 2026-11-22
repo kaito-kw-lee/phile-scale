@@ -30,8 +30,14 @@ resolves normally before the test. It uses the installed Compose configuration a
 the staged recommendation catalog. Run only when temporary blocking of that domain
 and Gravity refreshes are acceptable. No service stop or CLI installation is required.
 
-Actual terminal resizing, Ctrl+C during download, API outage and partial-save failure
-remain unverified on hardware; relevant unit coverage does not replace those checks.
+The subsequent inline UI revision was also tested on **2026-11-22**, with 29 unit
+tests passing on the Pi. See [`verification/inline-lists-raspberry-pi.json`](../verification/inline-lists-raspberry-pi.json).
+Real pseudo-terminal checks covered normal-buffer output preservation, recommendation
+source versus download host, long-list scrolling, terminal resizing, Esc and Ctrl+C
+cancellation, and terminal attribute restoration. Enter save/Gravity and DNS blocking
+and unblocking passed again, with original subscriptions restored. The installed CLI
+was not replaced. Ctrl+C during download, API outage and partial-save failure remain
+unverified on hardware; unit coverage does not replace those checks.
 
 ## Recorded Hardware Results
 
